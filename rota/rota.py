@@ -1,10 +1,8 @@
-import os
+# -*- coding: utf-8 -*-
 import pandas as pd
-import numpy as np
 import dateparser
-import os
 
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from utils import splitDurations, formatCoworkerDescription, timedeltaString
 from Gcal import calendarServiceClient, createCalendar, createEvent, GoogleEvent
 
@@ -44,7 +42,6 @@ def gCalRota(
     )
 
     doctor_rota.reset_index(inplace=True)
-
     doctor_rota["start_time"] = doctor_rota["Date"] + doctor_rota["start_time"].apply(
         timedeltaString
     )
@@ -70,39 +67,38 @@ def orientateRota(rota_path: str, rota_start_date: datetime):
     rota.dropna(axis=1, how="all", inplace=True)
     rota = rota.applymap(lambda x: x.strip() if isinstance(x, str) else x)
     rota = rota.fillna("").replace("OFF", "")
-
     # Add columns as doctor names
     doctor_dict = {
         str(i + 1): name
         for i, name in enumerate(
             [
-                "Faryal Peerally (IMT1)",
+                "Faryal Peerally(IMT1)",
                 "Dean Carolan (IMT1)",
                 "Tom Carson (F2)",
-                "Catherine Rooney (GP)",
-                "Sreelata Periketi (GP)",
-                "Dawn Pollock Shels (F2) & Samantha Banford (IMT1)",
-                "Laura Shannon (IMT2)",
-                "Vacant Line",
-                "Ismail Abdulazeez (GP)",
+                "Handi Chishti (IMT1)",
+                "Kelly McGuigan(GP)",
+                "Dawn Pollock Sheals(F2)/Samantha Banford(IMT1)",
+                "Kathryn Robinson(IMT2)",
+                "Aisling Murray(Loc)",
+                "Amy Wood(GP)",
                 "Hannah Stewart (IMT1)",
-                "Caoimhe Cooke (F2)",
-                "Roisin Chambers(GP)",
+                "Caoimhe Cooke(F2)",
+                "Alasdair Trimble (GP)",
                 "Ryan Doherty (F2)",
                 "Laura Marmion (F2)",
-                "Clare Moore (GP)",
+                "Leslie Bailie(GP)",
+                "Sajida Mushtaq (GP)",
                 "Gary Roulston (IMT1)",
-                "Opeyemi Makanjoula (IMT1)",
-                "Shwe Win (IMT2)",
-                "Vacant Line",
-                "Chandrika Mary Kanjee (F2)",
+                "Opeyemi Makanjoula(IMT1)",
+                "Alison Thompson (IMT1)",
+                "Ashley Mulholland (GP)",
+                "Chandrika Kanjee(F2)",
                 "Razan Elnaim (F2)",
-                "Alice Cullen(Loc)",
-                "Craig Meek (Loc)",
-                "Peter Neeson (F2)",
+                "Alice Cullen (Loc)",
+                "Craig meek (Loc)",
+                "Peter Neeson(F2)",
                 "Catriona Gormley (F2)",
-                "Rebekah Ross(CT2)",
-                "Rachael Henderson(GP)",
+                "Vishu Kuma Valladpareddy(IMT2)",
             ]
         )
     }
@@ -116,13 +112,17 @@ def orientateRota(rota_path: str, rota_start_date: datetime):
     rota.rename(columns={"": "Date"}, inplace=True)
     rota["Year"] = start_year
     rota["DateTime"] = rota["Date"].apply(dateparser.parse)
-    year_change_index = rota[
-        rota.DateTime.dt.month > rota.DateTime.dt.month.shift(-1)
-    ].index[0]
 
-    rota.loc[year_change_index:, "Year"] = rota.loc[year_change_index:, "Year"] + 1
+    year_change = rota[rota.DateTime.dt.month > rota.DateTime.dt.month.shift(-1)]
 
-    rota.Date = rota.Date + rota.Year.apply(lambda x: f" {x}")
+    if not year_change.empty:
+
+        year_change_index = year_change.index[0]
+
+        rota.loc[year_change_index:, "Year"] = rota.loc[year_change_index:, "Year"] + 1
+
+        rota.Date = rota.Date + rota.Year.apply(lambda x: f" {x}")
+
     rota.Date = rota.Date.apply(dateparser.parse)
 
     rota.drop(["Year", "DateTime"], axis=1, inplace=True)
@@ -141,10 +141,11 @@ def orientateRota(rota_path: str, rota_start_date: datetime):
 
 if __name__ == "__main__":
 
-    rota_path = "rotas/Ulster Rota Dec 20.xlsx"
+    # rota_path = "rotas/Ulster Rota Dec 20.xlsx"
+    rota_path = "rotas/Ulster Rota Feb 21.xlsx"
 
     rota = gCalRota(
-        orientateRota(rota_path, datetime(2020, 12, 2)),
+        orientateRota(rota_path, datetime(2021, 2, 3)),
         {
             "Day shift": "09.00-17.00",
             "Long day shift": "09.00-22.00",
@@ -155,9 +156,8 @@ if __name__ == "__main__":
     )
 
     service_client = calendarServiceClient()
-    calendar_id = createCalendar(service_client, 'Ulster Cardiology Rota')
-
-    for _, row in rota[30:].iterrows():
-        if row['summary']:
+    calendar_id = createCalendar(service_client, "Ulster Cardiology Rota")
+    for _, row in rota.iterrows():
+        if row["summary"]:
             event = GoogleEvent(**row.to_dict())
             createEvent(service_client, event, calendar_id)
