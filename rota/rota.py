@@ -1,4 +1,5 @@
 from functools import update_wrapper
+from numpy import column_stack
 import pandas as pd
 import dateparser
 
@@ -54,7 +55,7 @@ def gCalRota(
         doctor_rota["end_time"].lt(doctor_rota["start_time"]), "end_time"
     ] += timedelta(days=1)
 
-    return doctor_rota.drop(doctor_rota.query('start_time == end_time').index)
+    return doctor_rota.drop(doctor_rota.query("start_time == end_time").index)
 
 
 # TODO: This is the function which must be edited for each new rota
@@ -135,20 +136,28 @@ def firstRowAsColumn(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def adhocTemplateMatching(rota_path: str, start_date: datetime) -> pd.DataFrame:
-    weeks = [start_date + timedelta(days=7 * i) for i in range(0, 18)]
+def adhocTemplateMatching(
+    rota_path: str, start_date: datetime, number_of_weeks: int = 0
+) -> pd.DataFrame:
+    with open(f"{rota_path}/Sheet1.csv") as f:
+        rota: pd.DataFrame = pd.read_csv(f).dropna(how="all")
+    number_of_weeks = number_of_weeks or rota.shape[0]
+    weeks = [start_date + timedelta(days=7 * i) for i in range(0, number_of_weeks)]
     first_week = [start_date + timedelta(days=i) for i in range(0, 7)]
-    xls = pd.ExcelFile(rota_path)
-    rota = pd.read_excel(xls, "Sheet1").dropna(how="all")[:19]
     rota["Week Commencing"] = weeks
-    rota = rota.set_index("Week Commencing").astype(int)
+    rota = rota.set_index("Week Commencing")  # .astype(int)
 
-    shifts = pd.read_excel(xls, "Sheet2")
+    number_of_doctors = rota.shape[1] - 1
+
+    with open(f"{rota_path}/Sheet2.csv") as f:
+        shifts: pd.DataFrame = pd.read_csv(f).dropna(how="all")
+
     shifts.columns = map(lambda x: x.strip(), shifts.columns)
     shifts.rename(columns={"": "shift"}, inplace=True)
     shifts = shifts.set_index(["shift"])
     shifts.columns = first_week
 
+    # - Gets a list of timeseries of which doctors (by number) are working for each shift
     shifts = [
         pd.DataFrame(
             {
@@ -166,7 +175,10 @@ def adhocTemplateMatching(rota_path: str, start_date: datetime) -> pd.DataFrame:
         for shift_name in shifts.index
     ]
 
-    data = {str(i): {day: None for day in first_week} for i in range(1, 18)}
+    data = {
+        str(i): {day: None for day in first_week} for i in range(1, number_of_weeks)
+    }
+
     for shift_series in shifts:
         for day, row in shift_series.to_frame().iterrows():
             doctor = row.iloc[0]
@@ -174,26 +186,27 @@ def adhocTemplateMatching(rota_path: str, start_date: datetime) -> pd.DataFrame:
                 data[doctor][day.to_pydatetime()] = shift_series.name
 
     rolling_data = []
-    columns_map = {str(i): str(i) for i in range(1, 18)}
-    for week_num in range(20):
+    columns_map = {str(i): str(i) for i in range(1, number_of_doctors + 1)}
+    for week_num in range(number_of_weeks):
         updated_data = pd.DataFrame(data).rename(columns=columns_map)
         updated_data.index = map(
             lambda x: x + timedelta(days=7 * week_num), updated_data.index
         )
         rolling_data.append(updated_data)
         columns_map = {
-            doc: str(num) if (num := (int(i) - 1) % 17) != 0 else "17"
+            doc: str(num)
+            if (num := (int(i) - 1) % number_of_doctors) != 0
+            else str(number_of_doctors)
             for doc, i in columns_map.items()
         }
-    
+    # print(rolling_data)
     final = (
-        pd.concat(rolling_data)
-        .fillna("")
+        pd.concat(rolling_data).fillna("")
         # * replace numbers with doctors names
         .rename(columns={str(v): k for k, v in rota.iloc[0].to_dict().items()})
     )
     final.index.name = "Date"
-    return final 
+    return final
 
 
 if __name__ == "__main__":
@@ -202,9 +215,10 @@ if __name__ == "__main__":
     from time import sleep
 
     # rota_path = "rotas/Ulster Rota Dec 20.xlsx"
-    rota_path = "rotas/SHO Rolling rota April 2021.xlsx"
+    # rota_path = "rotas/SHO Rolling rota April 2021.xlsx"
+    rota_path = "rotas/SHO Rolling rota Aug 2021"
     # rota_path = "rota April 2021.xlsx"
-    start_date = datetime(2021, 4, 5)
+    start_date = datetime(2021, 8, 2)
 
     rota = gCalRota(
         adhocTemplateMatching(rota_path, start_date),
@@ -214,8 +228,9 @@ if __name__ == "__main__":
             "14:00-00:00": "14:00-00:00",
             "22:00-08:00": "22:00-08:00",
         },
-        doctor_name="Laura-Anne Marmion",
+        doctor_name="Mark Currie/ Laura Marmion",
     )
+
     service_client = calendarServiceClient()
     calendar_id = createCalendar(service_client, "Laura's Rota")
     for _, row in rota.iterrows():
