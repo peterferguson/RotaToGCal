@@ -58,11 +58,12 @@ def credentialsJson(name: str):
 def calendarServiceClient(
     scopes: List[str] = ["https://www.googleapis.com/auth/calendar"],
     creds_path: str = "credentials/credentials.json",
+    pickle_path: str = "credentials/token.pickle",
 ):
 
     creds = None
-    if os.path.exists("credentials/token.pickle"):
-        with open("credentials/token.pickle", "rb") as token:
+    if os.path.exists(pickle_path):
+        with open(pickle_path, "rb") as token:
             creds = pickle.load(token)
 
     # If there are no (valid) credentials available, let the user log in.
@@ -77,7 +78,7 @@ def calendarServiceClient(
                 creds = flow.run_local_server(port=0)
 
         # Save the credentials for the next run
-        with open("credentials/token.pickle", "wb") as token:
+        with open(pickle_path, "wb") as token:
             pickle.dump(creds, token)
 
     return build("calendar", "v3", credentials=creds)
