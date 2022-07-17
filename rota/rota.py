@@ -1,13 +1,18 @@
-from functools import update_wrapper
-from numpy import column_stack
-import pandas as pd
-import dateparser
-
 from datetime import datetime, timedelta
 
+import dateparser
+import numpy as np
+import pandas as pd
+from numpy import column_stack
 from pandas.core.frame import DataFrame
-from utils import splitDurations, formatCoworkerDescription, timedeltaString
-from Gcal import calendarServiceClient, createCalendar, createEvent, GoogleEvent
+
+from Gcal import GoogleEvent, calendarServiceClient, createCalendar, createEvent
+from utils import (
+    formatCoworkerDescription,
+    splitDurations,
+    timedeltaString,
+    splitDataFrameOnEmptyRows,
+)
 
 """# Doctor Specific Rota"""
 
@@ -29,8 +34,12 @@ def gCalRota(
                                     - description (who else is working)
     """
     name_on_calendar = next(name for name in rota.columns if doctor_name in name)
+
     doctor_rota = (
-        rota[name_on_calendar].to_frame().rename(columns={name_on_calendar: "summary"})
+        rota[name_on_calendar]
+        .to_frame()
+        .dropna()
+        .rename(columns={name_on_calendar: "summary"})
     )
 
     doctor_rota["start_time"] = doctor_rota["summary"].apply(
@@ -130,105 +139,73 @@ def orientateRota(rota_path: str, rota_start_date: datetime):
     return rota.applymap(lambda x: shift_names[x] if x in shift_names else x)
 
 
-def firstRowAsColumn(df: pd.DataFrame) -> pd.DataFrame:
-    df.columns = df.iloc[0]
-    df = df[1:]
-    return df
-
-
 def adhocTemplateMatching(
     rota_path: str, start_date: datetime, number_of_weeks: int = 0
 ) -> pd.DataFrame:
-    with open(f"{rota_path}/Sheet1.csv") as f:
-        rota: pd.DataFrame = pd.read_csv(f).dropna(how="all")
-    number_of_weeks = number_of_weeks or rota.shape[0]
-    weeks = [start_date + timedelta(days=7 * i) for i in range(0, number_of_weeks)]
-    first_week = [start_date + timedelta(days=i) for i in range(0, 7)]
-    rota["Week Commencing"] = weeks
-    rota = rota.set_index("Week Commencing")  # .astype(int)
+    with open(f"{rota_path}", "rb") as f:
+        rota: pd.DataFrame = pd.read_excel(f)
 
-    number_of_doctors = rota.shape[1] - 1
+    isSeparatedIntoWeeksWithDoctorColumns = True
 
-    with open(f"{rota_path}/Sheet2.csv") as f:
-        shifts: pd.DataFrame = pd.read_csv(f).dropna(how="all")
-
-    shifts.columns = map(lambda x: x.strip(), shifts.columns)
-    shifts.rename(columns={"": "shift"}, inplace=True)
-    shifts = shifts.set_index(["shift"])
-    shifts.columns = first_week
-
-    # - Gets a list of timeseries of which doctors (by number) are working for each shift
-    shifts = [
-        pd.DataFrame(
-            {
-                shift: {
-                    day: [
-                        doc
-                        for doctor in doctors.split("\n")
-                        if (doc := doctor.replace("DOCTOR", "").strip())
-                    ]
-                    for day, doctors in value.items()
-                }
-                for shift, value in shifts.T.to_dict().items()
-            }
-        ).explode(shift_name)[shift_name]
-        for shift_name in shifts.index
-    ]
-
-    data = {
-        str(i): {day: None for day in first_week} for i in range(1, number_of_weeks)
-    }
-
-    for shift_series in shifts:
-        for day, row in shift_series.to_frame().iterrows():
-            doctor = row.iloc[0]
-            if doctor in data:
-                data[doctor][day.to_pydatetime()] = shift_series.name
-
-    rolling_data = []
-    columns_map = {str(i): str(i) for i in range(1, number_of_doctors + 1)}
-    for week_num in range(number_of_weeks):
-        updated_data = pd.DataFrame(data).rename(columns=columns_map)
-        updated_data.index = map(
-            lambda x: x + timedelta(days=7 * week_num), updated_data.index
+    weeks: list[pd.DataFrame] = list(
+        map(
+            lambda week: week.T.dropna(how="all")
+            if isSeparatedIntoWeeksWithDoctorColumns
+            else week.dropna(how="all"),
+            splitDataFrameOnEmptyRows(rota),
         )
-        rolling_data.append(updated_data)
-        columns_map = {
-            doc: str(num)
-            if (num := (int(i) - 1) % number_of_doctors) != 0
-            else str(number_of_doctors)
-            for doc, i in columns_map.items()
-        }
-    # print(rolling_data)
-    final = (
-        pd.concat(rolling_data).fillna("")
-        # * replace numbers with doctors names
-        .rename(columns={str(v): k for k, v in rota.iloc[0].to_dict().items()})
     )
-    final.index.name = "Date"
-    return final
+
+    weeks = list(
+        map(
+            lambda week: week.rename(columns=week.iloc[0]).iloc[1:].set_index("Doctor"),
+            weeks,
+        )
+    )
+
+    doctors = {doctor for week in weeks for doctor in week.columns}
+
+    rotas: list = []
+    for doctor in doctors:
+        try:
+            rotas.append(
+                (pd.concat([week[doctor] for week in weeks if doctor in week]))
+            )
+        except:
+            continue
+
+    rota = pd.DataFrame(rotas).T
+    rota = rota.fillna("").replace("OFF", "")
+
+    rota.index.name = "Date"
+    rota.columns = [str(col) for col in rota.columns]
+
+    return rota
 
 
 if __name__ == "__main__":
 
-    from rich import print
     from time import sleep
+
+    from rich import print
 
     # rota_path = "rotas/Ulster Rota Dec 20.xlsx"
     # rota_path = "rotas/SHO Rolling rota April 2021.xlsx"
-    rota_path = "rotas/SHO Rolling rota Aug 2021"
+    # rota_path = "rotas/SHO Rolling rota Aug 2021"
     # rota_path = "rota April 2021.xlsx"
-    start_date = datetime(2021, 8, 2)
+    rota_path = "rotas/Psych-Full-Shift-Aug-2022.xlsx"
+    start_date = datetime(2022, 8, 2)
 
     rota = gCalRota(
         adhocTemplateMatching(rota_path, start_date),
         {
-            "08:00-18:00": "08:00-18:00",
-            "12:00-22:00": "12:00-22:00",
-            "14:00-00:00": "14:00-00:00",
-            "22:00-08:00": "22:00-08:00",
+            "09.00-17.00": "09.00-17.00",
+            "21.00-09.30": "21.00-09.30",
+            "Long Day 1 09.00-21.30": "09.00-21.30",
+            "Long Day 2 09.00-21.30": "09.00-21.30",
+            "Half  09.00-13.00": "09.00-13.00",
         },
-        doctor_name="Mark Currie/ Laura Marmion",
+        # doctor_name="Laura Marmion",
     )
 
     service_client = calendarServiceClient()

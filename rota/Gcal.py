@@ -109,7 +109,7 @@ def createCalendar(service, summary):
 
 
 def createEvent(service_client, event: GoogleEvent, calendar_id: str):
-    event = {
+    parsed_event = {
         "summary": event.summary,
         "description": event.description,
         # 'colorId': 9, #Blueberry
@@ -122,7 +122,12 @@ def createEvent(service_client, event: GoogleEvent, calendar_id: str):
             "timeZone": event.time_zone,
         },
     }
-    service_client.events().insert(calendarId=calendar_id, body=event).execute()
+    print(
+        service_client.events()
+        .insert(calendarId=calendar_id, body=parsed_event)
+        .execute()
+    )
+    # print(f"Created event {event.summary} on {event.start_time.isoformat()}")
 
 
 if __name__ == "__main__":
